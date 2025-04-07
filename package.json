@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "homepage": "https://Joja-Defector.github.io/executive-orders-explorer",
+  "deploy": "gh-pages --no-history -d build",
   "dependencies": {
     "lodash": "^4.17.21",
     "lucide-react": "^0.x.x",
