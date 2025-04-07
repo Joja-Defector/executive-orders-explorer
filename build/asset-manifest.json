@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/executive-orders-explorer/static/css/main.46a24b13.css",
+    "main.js": "/executive-orders-explorer/static/js/main.256b07c0.js",
+    "static/js/453.a0bdfaf6.chunk.js": "/executive-orders-explorer/static/js/453.a0bdfaf6.chunk.js",
+    "index.html": "/executive-orders-explorer/index.html",
+    "main.46a24b13.css.map": "/executive-orders-explorer/static/css/main.46a24b13.css.map",
+    "main.256b07c0.js.map": "/executive-orders-explorer/static/js/main.256b07c0.js.map",
+    "453.a0bdfaf6.chunk.js.map": "/executive-orders-explorer/static/js/453.a0bdfaf6.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.46a24b13.css",
+    "static/js/main.256b07c0.js"
+  ]
+}

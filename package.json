@@ -2,7 +2,7 @@
   "name": "executive-orders-explorer",
   "version": "0.1.0",
   "private": true,
-  "homepage": "https://JojaDefector.github.io/executive-orders-explorer",
+  "homepage": "https://Joja-Defector.github.io/executive-orders-explorer",
   "dependencies": {
     "lodash": "^4.17.21",
     "lucide-react": "^0.x.x",
