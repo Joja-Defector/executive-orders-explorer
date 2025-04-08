@@ -3,3 +3,4 @@ node_modules/
 .vs/slnx.sqlite".vs/" 
 .vs/".vs/" 
 "build/" 
+".vs/" 
