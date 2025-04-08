@@ -21,7 +21,7 @@ const App = () => {
         setIsLoading(true);
         setError(null);
         
-        // Use fetch instead of window.fs.readFile for standard React apps
+        // Use fetch instead of window.fs.readFile for standard React a
         const basePath = window.location.pathname.includes('executive-orders-explorer') 
           ? '/executive-orders-explorer' 
           : '';
