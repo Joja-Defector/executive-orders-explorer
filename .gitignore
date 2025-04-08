@@ -1,4 +1,5 @@
 node_modules/
 .cache/
 .vs/slnx.sqlite".vs/" 
-.vs/
+.vs/".vs/" 
+"build/" 
