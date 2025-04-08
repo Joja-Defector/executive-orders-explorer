@@ -22,7 +22,10 @@ const App = () => {
         setError(null);
         
         // Use fetch instead of window.fs.readFile for standard React apps
-        const response = await fetch('/executive_orders_summarized.csv');
+        const basePath = window.location.pathname.includes('executive-orders-explorer') 
+          ? '/executive-orders-explorer' 
+          : '';
+        const response = await fetch(`${basePath}/executive_orders_summarized.csv`);
         
         if (!response.ok) {
           throw new Error(`Failed to fetch CSV: ${response.status} ${response.statusText}`);
