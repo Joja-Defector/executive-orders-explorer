@@ -10,9 +10,14 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
         
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -30,17 +35,16 @@ jobs:
           # Run the EO scraper script
           python src/scripts/eo_scraper.py
       
-      - name: Commit and push if changes
+      - name: Commit changes
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          # Add both raw data and the summarized CSV
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
           git add data/
-          # Only commit if there are changes
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update executive orders data [skip ci]")
+          git add executive_orders_summarized.csv
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update executive orders data [skip ci]"
           
       - name: Push changes
         uses: ad-m/github-push-action@master
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.PAT }}
           branch: ${{ github.ref }}
