@@ -39,8 +39,8 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add data/
-          git add executive_orders_summarized.csv
+          git add data/presidential_actions_with_content.csv
+          git add public/executive_orders_summarized.csv
           git diff --quiet && git diff --staged --quiet || git commit -m "Update executive orders data [skip ci]"
           
       - name: Push changes
