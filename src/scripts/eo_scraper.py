@@ -327,7 +327,7 @@ def scrape_whitehouse_actions(num_pages=None, existing_df=None):
         combined_df = combined_df.reset_index(drop=True)
         
         # Save to CSV
-        filename = 'public/executive_orders_summarized.csv'
+        filename = 'data/presidential_actions_with_content.csv'
         combined_df.to_csv(filename, index=False)
         print(f"\nData saved to '{filename}'")
         

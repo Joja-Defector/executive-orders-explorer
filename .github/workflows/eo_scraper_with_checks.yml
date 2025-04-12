@@ -1,0 +1,97 @@
+﻿name: Executive Orders Scraper
+
+on:
+  schedule:
+    # Run daily at 2:00 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run EO scraper
+        run: |
+          # Create data directory if it doesn't exist
+          mkdir -p data
+          # Run the EO scraper script
+          python src/scripts/eo_scraper.py
+      
+      - name: Run data quality checks
+        run: |
+          # Run the data quality checks
+          python src/scripts/data_quality_checks.py --file data/presidential_actions_with_content.csv
+          
+          # Store the exit code for use in conditional steps
+          echo "QUALITY_CHECK_PASSED=$?" >> $GITHUB_ENV
+      
+      - name: Generate data quality report
+        run: |
+          # Generate a data quality report with timestamp
+          echo "# Executive Orders Data Quality Report" > data_quality_report.md
+          echo "Generated on: $(date)" >> data_quality_report.md
+          echo "" >> data_quality_report.md
+          echo "## Quality Check Results" >> data_quality_report.md
+          
+          if [ "${{ env.QUALITY_CHECK_PASSED }}" == "0" ]; then
+            echo "✅ **All quality checks PASSED**" >> data_quality_report.md
+          else
+            echo "❌ **Some quality checks FAILED**" >> data_quality_report.md
+            echo "" >> data_quality_report.md
+            echo "Please review the workflow logs for details." >> data_quality_report.md
+          fi
+          
+          echo "" >> data_quality_report.md
+          echo "## Dataset Statistics" >> data_quality_report.md
+          echo "- Total records: $(wc -l < data/presidential_actions_with_content.csv)" >> data_quality_report.md
+          echo "- Most recent scrape: $(date)" >> data_quality_report.md
+      
+      - name: Commit changes if quality checks pass
+        if: env.QUALITY_CHECK_PASSED == 0
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/presidential_actions_with_content.csv
+          git add public/executive_orders_summarized.csv
+          git add data_quality_report.md
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update executive orders data [skip ci]"
+          
+      - name: Push changes if quality checks pass
+        if: env.QUALITY_CHECK_PASSED == 0
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.PAT }}
+          branch: ${{ github.ref }}
+      
+      - name: Create issue if quality checks fail
+        if: env.QUALITY_CHECK_PASSED != 0
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '⚠️ Executive Orders scraper data quality check failed',
+              body: 'The automated data quality check for the Executive Orders scraper has failed. Please check the [workflow logs](' + context.payload.repository.html_url + '/actions/runs/' + context.runId + ') for details.'
+            })
