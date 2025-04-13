@@ -61,17 +61,17 @@ jobs:
             exit 1
           fi
       
-      - name: Commit and push changes
+      - name: Commit changes
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
           
           # Check if there are any changes to commit
-          if git diff --quiet public/executive_orders_summarized.csv; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          
           git add public/executive_orders_summarized.csv
-          git commit -m "Update executive orders summaries [skip ci]"
-          git push
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update executive orders summaries [skip ci]"
+      
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.PAT }}
+          branch: ${{ github.ref }}
