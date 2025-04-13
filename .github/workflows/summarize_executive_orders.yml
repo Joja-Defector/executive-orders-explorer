@@ -1,0 +1,77 @@
+name: Summarize Executive Orders
+
+on:
+  # Run after the scraper workflow completes successfully
+  workflow_run:
+    workflows: ["Executive Orders Scraper"]
+    types:
+      - completed
+  
+  # Allow manual triggering for testing
+  workflow_dispatch:
+
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    # Only run if the scraper workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history for proper git operations
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas anthropic
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      
+      - name: Summarize executive orders
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Create output directory if it doesn't exist
+          mkdir -p output
+          
+          # Run the summarizer script
+          python src/scripts/executive_order_summarizer_v2.py \
+            --input data/presidential_actions_with_content.csv \
+            --previous public/executive_orders_summarized.csv \
+            --api-key "$ANTHROPIC_API_KEY" \
+            --output-dir output
+      
+      - name: Copy latest output to public directory
+        run: |
+          # Find the most recent file in the output directory
+          LATEST_FILE=$(ls -t output/executive_orders_summarized_*.csv | head -1)
+          
+          if [ -n "$LATEST_FILE" ]; then
+            # Copy to public directory with a fixed name
+            cp "$LATEST_FILE" public/executive_orders_summarized.csv
+            echo "Copied $LATEST_FILE to public/executive_orders_summarized.csv"
+          else
+            echo "No output file found"
+            exit 1
+          fi
+      
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Check if there are any changes to commit
+          if git diff --quiet public/executive_orders_summarized.csv; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          
+          git add public/executive_orders_summarized.csv
+          git commit -m "Update executive orders summaries [skip ci]"
+          git push
