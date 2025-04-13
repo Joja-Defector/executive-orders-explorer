@@ -13,6 +13,8 @@ on:
 jobs:
   summarize:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Explicitly give write permission
     # Only run if the scraper workflow succeeded
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     
