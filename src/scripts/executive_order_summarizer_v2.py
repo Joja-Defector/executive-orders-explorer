@@ -1,3 +1,10 @@
+import pandas as pd
+import anthropic
+import time
+from datetime import datetime
+import os
+import argparse
+
 def summarize_executive_order(client, content, title, date):
     """
     Send executive order content to Anthropic API and get a structured summary.
@@ -10,67 +17,7 @@ def summarize_executive_order(client, content, title, date):
         
     Returns:
         String containing the formatted summary
-    """import pandas as pd
-import anthropic
-import time
-from datetime import datetime
-import os
-import argparse
-
-def standardize_dates(df, date_column='date'):
     """
-    Standardize date formats in a dataframe to ensure consistency.
-    
-    Args:
-        df: Pandas DataFrame containing dates
-        date_column: Name of the column containing dates
-        
-    Returns:
-        DataFrame with standardized dates
-    """
-    if date_column not in df.columns:
-        print(f"Warning: Date column '{date_column}' not found in dataframe")
-        return df
-    
-    # Make a copy to avoid modifying the original
-    result_df = df.copy()
-    
-    # Function to convert various date formats to a standard one
-    def convert_date(date_str):
-        if pd.isna(date_str):
-            return date_str
-            
-        date_str = str(date_str).strip()
-        
-        # Try different date formats
-        for date_format in [
-            '%Y-%m-%d',        # 2023-01-25
-            '%m/%d/%Y',        # 01/25/2023
-            '%B %d, %Y',       # January 25, 2023
-            '%b %d, %Y',       # Jan 25, 2023
-            '%d %B %Y',        # 25 January 2023
-            '%d %b %Y',        # 25 Jan 2023
-            '%Y/%m/%d',        # 2023/01/25
-            '%d-%m-%Y',        # 25-01-2023
-            '%m-%d-%Y',        # 01-25-2023
-            '%m.%d.%Y',        # 01.25.2023
-            '%d.%m.%Y',        # 25.01.2023
-        ]:
-            try:
-                parsed_date = datetime.strptime(date_str, date_format)
-                # Return standardized format (ISO format: MM-DD-YYYY)
-                return parsed_date.strftime('%m/%d/%Y')
-            except ValueError:
-                continue
-        
-        # If all parsing attempts fail, return the original string
-        print(f"Warning: Could not parse date: '{date_str}'")
-        return date_str
-    
-    # Apply the conversion to the date column
-    result_df[date_column] = result_df[date_column].apply(convert_date)
-    
-    return result_df
     prompt = f"""
 You are analyzing an executive order titled "{title}" issued on {date}.
 
@@ -103,6 +50,47 @@ Format your response in a simple text format without any markdown or special for
         print(f"Error calling Anthropic API: {e}")
         return "Error generating summary."
 
+def standardize_date_format(df, date_col='date'):
+    """
+    Standardize date format to MM/DD/YYYY in the dataframe.
+    
+    Args:
+        df: DataFrame containing the date column
+        date_col: Name of the date column to standardize
+        
+    Returns:
+        DataFrame with standardized date format
+    """
+    if date_col not in df.columns:
+        print(f"Warning: Date column '{date_col}' not found in DataFrame. Skipping date standardization.")
+        return df
+        
+    # Create a copy to avoid SettingWithCopyWarning
+    result_df = df.copy()
+    
+    # Try to convert dates to a standard format
+    try:
+        # First convert strings to datetime objects (handling various input formats)
+        result_df[date_col] = pd.to_datetime(result_df[date_col], errors='coerce')
+        
+        # Format datetime objects to MM/DD/YYYY string format
+        result_df[date_col] = result_df[date_col].dt.strftime('%m/%d/%Y')
+        
+        # Handle any dates that couldn't be parsed
+        if result_df[date_col].isna().any():
+            na_count = result_df[date_col].isna().sum()
+            print(f"Warning: Could not parse {na_count} date(s). These will remain in their original format.")
+            
+            # For rows where the date is now NaT, restore the original date string
+            mask = result_df[date_col].isna()
+            if mask.any():
+                result_df.loc[mask, date_col] = df.loc[mask, date_col]
+    except Exception as e:
+        print(f"Error standardizing date formats: {e}")
+        return df  # Return original dataframe if conversion fails
+    
+    return result_df
+
 def main():
     parser = argparse.ArgumentParser(description='Summarize executive orders using Anthropic API')
     parser.add_argument('--input', type=str, required=True, help='Path to input CSV file with new executive orders')
@@ -114,7 +102,7 @@ def main():
     parser.add_argument('--force-update', action='store_true',
                        help='Process all executive orders in the input file, overwriting any existing summaries')
     parser.add_argument('--date-column', type=str, default='date',
-                       help='Column containing dates (default: date)')
+                       help='Column containing dates to standardize (default: date)')
     args = parser.parse_args()
     
     # Create output directory if it doesn't exist
@@ -130,20 +118,19 @@ def main():
     try:
         new_df = pd.read_csv(args.input)
         print(f"Loaded {len(new_df)} executive orders from input file.")
-        
-        # Standardize dates in the new dataframe
-        new_df = standardize_dates(new_df, args.date_column)
-        print(f"Standardized dates in input file.")
     except Exception as e:
         print(f"Error reading input CSV file: {e}")
         return
     
     # Check if required columns exist in new data
-    required_columns = ['title', 'date', 'content']
+    required_columns = ['title', args.date_column, 'content']
     for col in required_columns:
         if col not in new_df.columns:
             print(f"Error: Required column '{col}' not found in input CSV.")
             return
+    
+    # Standardize date format in the input data
+    new_df = standardize_date_format(new_df, date_col=args.date_column)
     
     # Load previously summarized executive orders if provided
     if args.previous:
@@ -151,13 +138,13 @@ def main():
             prev_df = pd.read_csv(args.previous)
             print(f"Loaded {len(prev_df)} previously summarized executive orders.")
             
-            # Standardize dates in the previous dataframe
-            prev_df = standardize_dates(prev_df, args.date_column)
-            print(f"Standardized dates in previous file.")
-            
             # Check if summary column exists in previous data
             if 'summary' not in prev_df.columns:
                 print(f"Warning: 'summary' column not found in previous CSV. File may not contain summaries.")
+            
+            # Standardize date format in the previous data
+            prev_df = standardize_date_format(prev_df, date_col=args.date_column)
+            
         except Exception as e:
             print(f"Error reading previous CSV file: {e}")
             return
@@ -230,7 +217,7 @@ def main():
             client, 
             row['content'], 
             row['title'], 
-            row['date']
+            row[args.date_column]  # Use the specified date column
         )
         
         # Add summary to dataframe
@@ -292,21 +279,11 @@ def main():
             to_process_df = to_process_df.drop(columns=['_clean_id'])
         result_df = to_process_df
     
+    # Final standardization of date format in the output
+    result_df = standardize_date_format(result_df, date_col=args.date_column)
+    
     # Save the updated dataframe to a new CSV file
     try:
-        # Final cleanup - ensure no temporary columns remain
-        if '_clean_id' in result_df.columns:
-            result_df = result_df.drop(columns=['_clean_id'])
-        
-        # Sort the dataframe by date, most recent first
-        if args.date_column in result_df.columns:
-            try:
-                # Convert to datetime for proper sorting
-                result_df[args.date_column] = pd.to_datetime(result_df[args.date_column], errors='coerce')
-                result_df = result_df.sort_values(by=args.date_column, ascending=False)
-            except Exception as e:
-                print(f"Warning: Could not sort by date: {e}")
-        
         result_df.to_csv(output_filename, index=False)
         print(f"\nSuccessfully saved {len(result_df)} executive orders to {output_filename}")
         print(f"  {len(to_process_df)} newly summarized")
