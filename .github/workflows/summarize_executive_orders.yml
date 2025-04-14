@@ -1,4 +1,4 @@
-name: Summarize Executive Orders
+﻿name: Summarize Executive Orders
 
 on:
   # Run after the scraper workflow completes successfully
@@ -14,7 +14,8 @@ jobs:
   summarize:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Explicitly give write permission
+      contents: write  # For committing changes
+      issues: write    # For creating issues
     # Only run if the scraper workflow succeeded
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     
@@ -62,6 +63,106 @@ jobs:
             echo "No output file found"
             exit 1
           fi
+      
+      - name: Check for new executive orders
+        id: check_changes
+        run: |
+          # Create a temporary script to check for changes
+          cat > check_new_eos.py << 'EOF'
+          import pandas as pd
+          import json
+          import os
+          
+          # Read the previous and current files
+          try:
+              previous_df = pd.read_csv('public/executive_orders_summarized.csv')
+              current_file = [f for f in os.listdir('output') if f.startswith('executive_orders_summarized_')]
+              if not current_file:
+                  print("No new output file found")
+                  exit(0)
+                  
+              current_df = pd.read_csv(f'output/{current_file[0]}')
+              
+              # Check if there are any new entries
+              if len(current_df) > len(previous_df):
+                  # Get the new entries
+                  if 'title' in current_df.columns and 'date' in current_df.columns:
+                      new_entries = current_df[~current_df['title'].isin(previous_df['title'])]
+                      
+                      # Format the notification content
+                      notification = {"new_eos": []}
+                      for _, row in new_entries.iterrows():
+                          entry = {
+                              "title": row['title'],
+                              "date": row['date'],
+                              "summary": row['summary'] if 'summary' in row else "No summary available"
+                          }
+                          notification["new_eos"].append(entry)
+                      
+                      # Write the notification to a file for the next step
+                      with open('new_eos.json', 'w') as f:
+                          json.dump(notification, f)
+                      
+                      print(f"Found {len(new_entries)} new executive orders")
+                      print("::set-output name=has_new_eos::true")
+                      print(f"::set-output name=new_eo_count::{len(new_entries)}")
+                  else:
+                      print("Required columns not found in the CSV")
+              else:
+                  print("No new executive orders found")
+                  print("::set-output name=has_new_eos::false")
+                  print("::set-output name=new_eo_count::0")
+          except Exception as e:
+              print(f"Error checking for new EOs: {e}")
+              print("::set-output name=has_new_eos::false")
+              print("::set-output name=new_eo_count::0")
+          EOF
+          
+          # Run the script
+          python check_new_eos.py
+      
+      - name: Create GitHub Issue for new executive orders
+        if: steps.check_changes.outputs.has_new_eos == 'true'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            
+            try {
+              // Read the notification data
+              const notificationData = JSON.parse(fs.readFileSync('new_eos.json', 'utf8'));
+              const newEoCount = ${{ steps.check_changes.outputs.new_eo_count }};
+              
+              // Create issue title
+              const issueTitle = `🚨 New Executive Order${newEoCount > 1 ? 's' : ''} Detected (${newEoCount})`;
+              
+              // Create issue body
+              let issueBody = `## ${newEoCount} new Executive Order${newEoCount > 1 ? 's' : ''} detected and summarized\n\n`;
+              
+              // Add each EO to the body
+              notificationData.new_eos.forEach((eo, index) => {
+                issueBody += `### ${index + 1}. ${eo.title}\n`;
+                issueBody += `**Date:** ${eo.date}\n\n`;
+                issueBody += `**Summary:**\n${eo.summary}\n\n`;
+                issueBody += `---\n\n`;
+              });
+              
+              issueBody += `*This issue was automatically created by the GitHub Actions workflow.*`;
+              
+              // Create the issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: issueTitle,
+                body: issueBody,
+                labels: ['executive-order', 'notification']
+              });
+              
+              console.log(`Created issue for ${newEoCount} new executive orders`);
+            } catch (error) {
+              console.error('Error creating issue:', error);
+            }
       
       - name: Commit changes
         run: |
