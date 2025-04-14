@@ -56,8 +56,8 @@ def main():
     parser.add_argument('--previous', type=str, help='Path to CSV file with previously summarized executive orders')
     parser.add_argument('--api-key', type=str, required=True, help='Anthropic API key')
     parser.add_argument('--output-dir', type=str, default='output', help='Directory to save output CSV')
-    parser.add_argument('--unique-id', type=str, default='link', 
-                       help='Column to use as unique identifier for executive orders (default: link)')
+    parser.add_argument('--unique-id', type=str, default='title', 
+                       help='Column to use as unique identifier for executive orders (default: title)')
     parser.add_argument('--force-update', action='store_true',
                        help='Process all executive orders in the input file, overwriting any existing summaries')
     args = parser.parse_args()
@@ -80,7 +80,7 @@ def main():
         return
     
     # Check if required columns exist in new data
-    required_columns = ['title', 'date', 'content', 'link']
+    required_columns = ['title', 'date', 'content']
     for col in required_columns:
         if col not in new_df.columns:
             print(f"Error: Required column '{col}' not found in input CSV.")
@@ -155,7 +155,7 @@ def main():
     
     # Process each new executive order
     for i, row in to_process_df.iterrows():
-        print(f"Processing executive order {i-to_process_df.index[0]+1}/{len(to_process_df)}: {row['title']}")
+        print(f"Processing executive order {i-to_process_df.index[0]+1}/{len(to_process_df)}: {row[unique_id]}")
         
         # Skip if content is empty
         if pd.isna(row['content']) or row['content'].strip() == '':
@@ -183,6 +183,14 @@ def main():
     
     # Combine previous and new summaries
     if args.previous and not prev_df.empty:
+        # Remove temporary _clean_id column if it exists
+        if '_clean_id' in new_df.columns:
+            new_df = new_df.drop(columns=['_clean_id'])
+        if '_clean_id' in prev_df.columns:
+            prev_df = prev_df.drop(columns=['_clean_id'])
+        if '_clean_id' in to_process_df.columns:
+            to_process_df = to_process_df.drop(columns=['_clean_id'])
+            
         if to_process_df.empty:
             print("No new executive orders found to process.")
             
@@ -197,23 +205,28 @@ def main():
                 print("but they weren't processed. This may indicate an issue with the comparison logic.")
                 print(f"First few missing IDs: {list(missing_ids)[:3]}")
             
-            # Use the previous data as the result
+            # Use the previous data as the result - PRESERVE ALL EXISTING COLUMNS AND VALUES
             result_df = prev_df.copy()
         else:
-            # Ensure the same columns exist in both dataframes
-            combined_columns = list(set(prev_df.columns) | set(to_process_df.columns))
-            for col in combined_columns:
+            # Only add necessary new columns from new_df to prev_df
+            for col in to_process_df.columns:
                 if col not in prev_df.columns:
                     prev_df[col] = None
+                    
+            # Only add necessary new columns from prev_df to to_process_df
+            for col in prev_df.columns:
                 if col not in to_process_df.columns:
                     to_process_df[col] = None
-                    
+                
             # Concatenate the dataframes
             result_df = pd.concat([prev_df, to_process_df], ignore_index=True)
             
             # Drop duplicates based on the unique identifier, keeping the latest one (with summary)
             result_df = result_df.drop_duplicates(subset=[unique_id], keep='last')
     else:
+        # Remove temporary _clean_id column if it exists
+        if '_clean_id' in to_process_df.columns:
+            to_process_df = to_process_df.drop(columns=['_clean_id'])
         result_df = to_process_df
     
     # Save the updated dataframe to a new CSV file
