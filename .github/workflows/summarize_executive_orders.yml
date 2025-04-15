@@ -37,6 +37,7 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       
       - name: Summarize executive orders
+        id: summarize
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -49,6 +50,16 @@ jobs:
             --previous public/executive_orders_summarized.csv \
             --api-key "$ANTHROPIC_API_KEY" \
             --output-dir output
+          
+          # Capture the new EO count from the script output
+          NEW_EO_COUNT=$(grep -o "Found [0-9]* new executive orders to process" | grep -o "[0-9]*")
+          if [ -n "$NEW_EO_COUNT" ] && [ "$NEW_EO_COUNT" -gt 0 ]; then
+            echo "HAS_NEW_EOS=true" >> $GITHUB_ENV
+            echo "NEW_EO_COUNT=$NEW_EO_COUNT" >> $GITHUB_ENV
+          else
+            echo "HAS_NEW_EOS=false" >> $GITHUB_ENV
+            echo "NEW_EO_COUNT=0" >> $GITHUB_ENV
+          fi
       
       - name: Copy latest output to public directory
         run: |
@@ -59,70 +70,64 @@ jobs:
             # Copy to public directory with a fixed name
             cp "$LATEST_FILE" public/executive_orders_summarized.csv
             echo "Copied $LATEST_FILE to public/executive_orders_summarized.csv"
+            echo "LATEST_OUTPUT_FILE=$LATEST_FILE" >> $GITHUB_ENV
           else
             echo "No output file found"
             exit 1
           fi
       
-      - name: Check for new executive orders
-        id: check_changes
+      - name: Extract new executive orders data
+        if: env.HAS_NEW_EOS == 'true'
         run: |
-          # Create a temporary script to check for changes
-          cat > check_new_eos.py << 'EOF'
+          # Create a script to extract the new EOs
+          cat > extract_new_eos.py << 'EOF'
           import pandas as pd
           import json
           import os
+          import sys
           
-          # Read the previous and current files
-          try:
-              previous_df = pd.read_csv('public/executive_orders_summarized.csv')
-              current_file = [f for f in os.listdir('output') if f.startswith('executive_orders_summarized_')]
-              if not current_file:
-                  print("No new output file found")
-                  exit(0)
-                  
-              current_df = pd.read_csv(f'output/{current_file[0]}')
-              
-              # Check if there are any new entries
-              if len(current_df) > len(previous_df):
-                  # Get the new entries
-                  if 'title' in current_df.columns and 'date' in current_df.columns:
-                      new_entries = current_df[~current_df['title'].isin(previous_df['title'])]
-                      
-                      # Format the notification content
-                      notification = {"new_eos": []}
-                      for _, row in new_entries.iterrows():
-                          entry = {
-                              "title": row['title'],
-                              "date": row['date'],
-                              "summary": row['summary'] if 'summary' in row else "No summary available"
-                          }
-                          notification["new_eos"].append(entry)
-                      
-                      # Write the notification to a file for the next step
-                      with open('new_eos.json', 'w') as f:
-                          json.dump(notification, f)
-                      
-                      print(f"Found {len(new_entries)} new executive orders")
-                      print("::set-output name=has_new_eos::true")
-                      print(f"::set-output name=new_eo_count::{len(new_entries)}")
-                  else:
-                      print("Required columns not found in the CSV")
-              else:
-                  print("No new executive orders found")
-                  print("::set-output name=has_new_eos::false")
-                  print("::set-output name=new_eo_count::0")
-          except Exception as e:
-              print(f"Error checking for new EOs: {e}")
-              print("::set-output name=has_new_eos::false")
-              print("::set-output name=new_eo_count::0")
+          previous_file = 'public/executive_orders_summarized.csv'
+          current_file = sys.argv[1]  # Get the current file from arguments
+          
+          # Read the files
+          previous_df = pd.read_csv(previous_file)
+          current_df = pd.read_csv(current_file)
+          
+          # Get unique identifiers from each dataframe
+          if 'id' in current_df.columns:
+              prev_ids = set(previous_df['id'].astype(str))
+              curr_ids = set(current_df['id'].astype(str))
+              new_ids = curr_ids - prev_ids
+              new_entries = current_df[current_df['id'].astype(str).isin(new_ids)]
+          else:
+              # If no 'id' column, try to use title as identifier
+              prev_titles = set(previous_df['title'].astype(str))
+              curr_titles = set(current_df['title'].astype(str))
+              new_titles = curr_titles - prev_titles
+              new_entries = current_df[current_df['title'].astype(str).isin(new_titles)]
+          
+          # Format for notification
+          notification = {"new_eos": []}
+          for _, row in new_entries.iterrows():
+              entry = {
+                  "title": row['title'],
+                  "date": row['date'],
+                  "summary": row['summary'] if 'summary' in row else "No summary available"
+              }
+              notification["new_eos"].append(entry)
+          
+          # Save to file
+          with open('new_eos.json', 'w') as f:
+              json.dump(notification, f)
+          
+          print(f"Extracted {len(new_entries)} new executive orders")
           EOF
           
-          # Run the script
-          python check_new_eos.py
+          # Run the script with the latest output file
+          python extract_new_eos.py "$LATEST_OUTPUT_FILE"
       
       - name: Create GitHub Issue for new executive orders
-        if: steps.check_changes.outputs.has_new_eos == 'true'
+        if: env.HAS_NEW_EOS == 'true'
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -132,7 +137,7 @@ jobs:
             try {
               // Read the notification data
               const notificationData = JSON.parse(fs.readFileSync('new_eos.json', 'utf8'));
-              const newEoCount = ${{ steps.check_changes.outputs.new_eo_count }};
+              const newEoCount = process.env.NEW_EO_COUNT;
               
               // Create issue title
               const issueTitle = `🚨 New Executive Order${newEoCount > 1 ? 's' : ''} Detected (${newEoCount})`;
@@ -162,6 +167,7 @@ jobs:
               console.log(`Created issue for ${newEoCount} new executive orders`);
             } catch (error) {
               console.error('Error creating issue:', error);
+              core.setFailed(`Failed to create issue: ${error.message}`);
             }
       
       - name: Commit changes
