@@ -44,21 +44,42 @@ jobs:
           # Create output directory if it doesn't exist
           mkdir -p output
           
-          # Run the summarizer script
+          # Save the output of the summarizer script to a log file
           python src/scripts/executive_order_summarizer_v2.py \
             --input data/presidential_actions_with_content.csv \
             --previous public/executive_orders_summarized.csv \
             --api-key "$ANTHROPIC_API_KEY" \
-            --output-dir output
+            --output-dir output > summarizer_output.log 2>&1
           
-          # Capture the new EO count from the script output
-          NEW_EO_COUNT=$(grep -o "Found [0-9]* new executive orders to process" | grep -o "[0-9]*")
-          if [ -n "$NEW_EO_COUNT" ] && [ "$NEW_EO_COUNT" -gt 0 ]; then
-            echo "HAS_NEW_EOS=true" >> $GITHUB_ENV
-            echo "NEW_EO_COUNT=$NEW_EO_COUNT" >> $GITHUB_ENV
+          # Check if the script was successful
+          if [ $? -ne 0 ]; then
+            cat summarizer_output.log
+            echo "Summarizer script failed"
+            exit 1
+          fi
+          
+          # Display the output
+          cat summarizer_output.log
+          
+          # Check if any new EOs were found
+          if grep -q "Found.*new executive orders to process" summarizer_output.log; then
+            # Extract the count of new EOs
+            NEW_EO_COUNT=$(grep "Found.*new executive orders to process" summarizer_output.log | head -n 1 | grep -o "[0-9]*")
+            
+            # Verify that we have a number
+            if [ -n "$NEW_EO_COUNT" ] && [ "$NEW_EO_COUNT" -gt 0 ]; then
+              echo "NEW_EO_COUNT=$NEW_EO_COUNT" >> $GITHUB_ENV
+              echo "HAS_NEW_EOS=true" >> $GITHUB_ENV
+              echo "Found $NEW_EO_COUNT new executive orders"
+            else
+              echo "HAS_NEW_EOS=false" >> $GITHUB_ENV
+              echo "NEW_EO_COUNT=0" >> $GITHUB_ENV
+              echo "No new executive orders found"
+            fi
           else
             echo "HAS_NEW_EOS=false" >> $GITHUB_ENV
             echo "NEW_EO_COUNT=0" >> $GITHUB_ENV
+            echo "No new executive orders found"
           fi
       
       - name: Copy latest output to public directory
@@ -86,25 +107,30 @@ jobs:
           import os
           import sys
           
+          # Get the file paths from environment variables
+          current_file = os.environ.get('LATEST_OUTPUT_FILE')
           previous_file = 'public/executive_orders_summarized.csv'
-          current_file = sys.argv[1]  # Get the current file from arguments
+          new_eo_count = int(os.environ.get('NEW_EO_COUNT', 0))
+          
+          print(f"Extracting data from {current_file}")
+          print(f"Expected new EO count: {new_eo_count}")
           
           # Read the files
-          previous_df = pd.read_csv(previous_file)
           current_df = pd.read_csv(current_file)
           
-          # Get unique identifiers from each dataframe
-          if 'id' in current_df.columns:
-              prev_ids = set(previous_df['id'].astype(str))
-              curr_ids = set(current_df['id'].astype(str))
-              new_ids = curr_ids - prev_ids
-              new_entries = current_df[current_df['id'].astype(str).isin(new_ids)]
-          else:
-              # If no 'id' column, try to use title as identifier
-              prev_titles = set(previous_df['title'].astype(str))
-              curr_titles = set(current_df['title'].astype(str))
-              new_titles = curr_titles - prev_titles
-              new_entries = current_df[current_df['title'].astype(str).isin(new_titles)]
+          # Sort by date (newest first) to get the most recent EOs
+          if 'date' in current_df.columns:
+              try:
+                  # Try to convert to datetime for proper sorting
+                  current_df['date_temp'] = pd.to_datetime(current_df['date'], errors='coerce')
+                  current_df = current_df.sort_values('date_temp', ascending=False)
+                  current_df = current_df.drop('date_temp', axis=1)
+              except Exception as e:
+                  print(f"Error sorting by date: {e}")
+          
+          # Take the top N entries based on NEW_EO_COUNT
+          new_entries = current_df.head(new_eo_count)
+          print(f"Selected {len(new_entries)} entries")
           
           # Format for notification
           notification = {"new_eos": []}
@@ -123,8 +149,8 @@ jobs:
           print(f"Extracted {len(new_entries)} new executive orders")
           EOF
           
-          # Run the script with the latest output file
-          python extract_new_eos.py "$LATEST_OUTPUT_FILE"
+          # Run the script
+          python extract_new_eos.py
       
       - name: Create GitHub Issue for new executive orders
         if: env.HAS_NEW_EOS == 'true'
