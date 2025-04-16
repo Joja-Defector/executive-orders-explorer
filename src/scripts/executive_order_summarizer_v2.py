@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 import argparse
 
-def summarize_executive_order(client, content, title, date):
+def summarize_executive_order(client, content, title, date, max_retries=5, initial_backoff=2):
     """
     Send executive order content to Anthropic API and get a structured summary.
     
@@ -14,6 +14,8 @@ def summarize_executive_order(client, content, title, date):
         content: The text content of the executive order
         title: The title of the executive order
         date: The date the executive order was issued
+        max_retries: Maximum number of retry attempts
+        initial_backoff: Initial backoff time in seconds (doubles with each retry)
         
     Returns:
         String containing the formatted summary
@@ -35,20 +37,35 @@ Please provide a concise summary covering:
 Format your response in a simple text format without any markdown or special formatting.
 """
 
-    try:
-        message = client.messages.create(
-            model="claude-3-7-sonnet-20250219",
-            max_tokens=1000,
-            temperature=0.0,
-            system="You are an expert in law, government, and policy analysis. Your task is to analyze executive orders and provide concise, balanced summaries that help ordinary citizens understand them.",
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return message.content[0].text
-    except Exception as e:
-        print(f"Error calling Anthropic API: {e}")
-        return "Error generating summary."
+    retries = 0
+    backoff_time = initial_backoff
+    
+    while retries <= max_retries:
+        try:
+            message = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=1000,
+                temperature=0.0,
+                system="You are an expert in law, government, and policy analysis. Your task is to analyze executive orders and provide concise, balanced summaries that help ordinary citizens understand them.",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return message.content[0].text
+        except Exception as e:
+            if hasattr(e, 'status_code') and e.status_code == 529:
+                if retries == max_retries:
+                    print(f"Maximum retries ({max_retries}) exceeded. Giving up.")
+                    return "Error generating summary: API overloaded after multiple retries."
+                
+                retries += 1
+                print(f"API overloaded. Retry attempt {retries}/{max_retries} after {backoff_time} seconds...")
+                time.sleep(backoff_time)
+                # Exponential backoff - double the wait time for the next retry
+                backoff_time *= 2
+            else:
+                print(f"Error calling Anthropic API: {e}")
+                return "Error generating summary."
 
 def standardize_date_format(df, date_col='date'):
     """
@@ -203,33 +220,66 @@ def main():
     # Add a new column for summaries
     to_process_df['summary'] = None
     
-    # Process each new executive order
-    for i, row in to_process_df.iterrows():
-        print(f"Processing executive order {i-to_process_df.index[0]+1}/{len(to_process_df)}: {row[unique_id]}")
+    # Process each new executive order with improved rate limiting
+    total_orders = len(to_process_df)
+    success_count = 0
+    failure_count = 0
+    
+    # Define batch size and delay between batches
+    batch_size = 5
+    batch_delay = 30  # seconds between batches
+
+    # Process in smaller batches to avoid overwhelming the API
+    for batch_start in range(0, total_orders, batch_size):
+        batch_end = min(batch_start + batch_size, total_orders)
+        batch_indices = to_process_df.index[batch_start:batch_end]
         
-        # Skip if content is empty
-        if pd.isna(row['content']) or row['content'].strip() == '':
-            print("  Skipping - No content available")
-            continue
+        print(f"\nProcessing batch {batch_start//batch_size + 1}/{(total_orders + batch_size - 1)//batch_size}")
         
-        # Get summary from Anthropic API
-        summary = summarize_executive_order(
-            client, 
-            row['content'], 
-            row['title'], 
-            row[args.date_column]  # Use the specified date column
-        )
-        
-        # Add summary to dataframe
-        to_process_df.at[i, 'summary'] = summary
-        
-        # Print progress
-        print(f"  Summary generated ({len(summary)} chars)")
-        
-        # Rate limiting to avoid hitting API limits
-        if i < to_process_df.index[-1]:
-            print("  Waiting 2 seconds before next request...")
-            time.sleep(2)
+        for i in batch_indices:
+            row = to_process_df.loc[i]
+            print(f"Processing executive order {list(batch_indices).index(i) + 1}/{len(batch_indices)} " +
+                  f"(overall: {list(to_process_df.index).index(i) + 1}/{total_orders}): {row[unique_id]}")
+            
+            # Skip if content is empty
+            if pd.isna(row['content']) or row['content'].strip() == '':
+                print("  Skipping - No content available")
+                continue
+            
+            # Get summary from Anthropic API with retries
+            summary = summarize_executive_order(
+                client, 
+                row['content'], 
+                row['title'], 
+                row[args.date_column],
+                max_retries=3,
+                initial_backoff=5
+            )
+            
+            # Update success/failure counts
+            if summary.startswith("Error generating summary"):
+                failure_count += 1
+            else:
+                success_count += 1
+            
+            # Add summary to dataframe
+            to_process_df.at[i, 'summary'] = summary
+            
+            # Print progress
+            print(f"  Summary generated ({len(summary)} chars)")
+            
+            # Rate limiting within batch - more conservative
+            if i != batch_indices[-1]:
+                delay = 5  # 5 seconds between requests within a batch
+                print(f"  Waiting {delay} seconds before next request...")
+                time.sleep(delay)
+
+    # Pause between batches
+        if batch_end < total_orders:
+            print(f"\nCompleted batch. Waiting {batch_delay} seconds before starting next batch...")
+            time.sleep(batch_delay)
+
+        print(f"\nSummary generation complete: {success_count} successful, {failure_count} failed")
     
     # Combine previous and new summaries
     if args.previous and not prev_df.empty:
