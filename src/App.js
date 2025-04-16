@@ -147,6 +147,7 @@ const App = () => {
     setShowFilters(false);
   };
 
+  /* Not used at the moment
   // Format date for display (MM/DD/YYYY)
   const formatDate = (dateStr) => {
     if (!dateStr) return '';
@@ -158,6 +159,7 @@ const App = () => {
       return dateStr;
     }
   };
+  */
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
